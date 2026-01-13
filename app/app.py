@@ -1,34 +1,57 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile, Depends, Form
 from app.schemas import PostCreate
-app = FastAPI()
+from app.db import Post, create_db_and_tables, get_async_session
+from sqlalchemy.ext.asyncio import AsyncSession
+from contextlib import asynccontextmanager
+from sqlalchemy import select
 
-text_posts = {
-    1: {"title": "New Post", "content": "cool test post"},
-    2: {"title": "Morning Thoughts", "content": "Woke up feeling motivated today"},
-    3: {"title": "FastAPI Progress", "content": "Finished setting up routes and schemas"},
-    4: {"title": "Gym Update", "content": "Hit a new PR on bench press"},
-    5: {"title": "Study Session", "content": "Reviewed system design basics"},
-    6: {"title": "Bug Fixed", "content": "Resolved authentication issue"},
-    7: {"title": "Learning Git", "content": "Understanding branches and merges"},
-    8: {"title": "Weekend Plan", "content": "Building a small backend project"},
-    9: {"title": "Tech Stack", "content": "Python, FastAPI, PostgreSQL"},
-    10: {"title": "Daily Reflection", "content": "Consistency beats motivation"}
-}
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await create_db_and_tables()
+    yield
 
-@app.get("/posts")
-def get_all_posts(limit: int=None):
-    if limit:
-        return list(text_posts.values())[:limit]
-    return text_posts
+app = FastAPI(lifespan=lifespan)
 
-@app.get("/posts/{id}")
-def get_posts(id: int):
-    if id not in text_posts:
-        raise HTTPException(status_code=404,detail="post not found")
-    return text_posts.get(id)
+@app.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    caption: str = Form(""),
+    session: AsyncSession = Depends(get_async_session)
+):
+    post = Post(
+        caption=caption,
+        url="dummy url",
+        file_type="photo",
+        file_name="dummy name"
+    )
+    session.add(post)
+    await session.commit()
+    await session.refresh(post)
+    return post
 
-@app.post
-def create_post(post: PostCreate):
-    new_post = {"title": post.title, "content": post.content}
-    text_posts[max(text_posts) + 1] = new_post
-    return new_post
+@app.get("/feed")
+async def get_feed(
+    session: AsyncSession = Depends(get_async_session)
+):
+    result = await session.execute(select(Post).order_by(Post.created_at.desc()))
+    posts = [row[0] for row in result.all()]
+
+    posts_data = []
+    for post in posts:
+        posts_data.append(
+            {
+                "id": str(post.id),
+                "caption": post.caption,
+                "url": post.url,
+                "file_type": post.file_type,
+                "created_at": post.created_at.isoformat()
+            }
+        )
+
+    return {"posts": posts_data}
+
+
+
+
+
+
